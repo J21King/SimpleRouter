@@ -45,7 +45,7 @@ void sr_init(struct sr_instance* sr)
     pthread_t thread;
 
     pthread_create(&thread, &(sr->attr), sr_arpcache_timeout, sr);
-    
+
     /* Add initialization code here! */
 
 } /* -- sr_init -- */
@@ -79,6 +79,19 @@ void sr_handlepacket(struct sr_instance* sr,
   printf("*** -> Received packet of length %d \n",len);
 
   /* fill in code here */
+  sr_ethernet_hdr_t *ehdr = (sr_ethernet_hdr_t *)packet;
+  /* sr_ip_hdr_t *iphdr = (sr_ip_hdr_t *)packet; */
+
+  print_hdr_eth(packet);
+
+  if(ntohs(ehdr->ether_type) == 2048) { /* it is an IP packet */
+	printf("\nIP packet\n");
+	/* x = cksum(iphdr->ip_sum,iphdr->ip_len); checksum */
+  }
+  else if(ntohs(ehdr->ether_type) == 2054) /* it is an ARP packet */
+	printf("\nARP packet\n");
+  else /* it is not an IP or ARP packet */
+	printf("\nUnknown packet\n");
 
 }/* end sr_ForwardPacket */
 

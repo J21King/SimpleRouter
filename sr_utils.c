@@ -74,7 +74,7 @@ void print_hdr_eth(uint8_t *buf) {
   print_addr_eth(ehdr->ether_dhost);
   fprintf(stderr, "\tsource: ");
   print_addr_eth(ehdr->ether_shost);
-  fprintf(stderr, "\ttype: %d\n", ntohs(ehdr->ether_type));
+  fprintf(stderr, "\ttype: 0x%x\n", ntohs(ehdr->ether_type));
 }
 
 /* Prints out fields in IP header. */
