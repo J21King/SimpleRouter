@@ -127,7 +127,7 @@ void print_hdr_arp(uint8_t *buf) {
   fprintf(stderr, "\tprotocol type: %d\n", ntohs(arp_hdr->ar_pro));
   fprintf(stderr, "\thardware address length: %d\n", arp_hdr->ar_hln);
   fprintf(stderr, "\tprotocol address length: %d\n", arp_hdr->ar_pln);
-  fprintf(stderr, "\topcode: %d\n", ntohs(arp_hdr->ar_op));
+  fprintf(stderr, "\topcode: 0x%x\n", ntohs(arp_hdr->ar_op));
 
   fprintf(stderr, "\tsender hardware address: ");
   print_addr_eth(arp_hdr->ar_sha);

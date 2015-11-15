@@ -1,0 +1,4 @@
+sr_arpcache.h:   to that ARP cache request. The ARP cache entries hold IP->MAC mappings and
+sr_arpcache.h:   # When servicing an arp reply that gives us an IP->MAC mapping
+sr_arpcache.h:/* Checks if an IP->MAC mapping is in the cache. IP is in network byte order.
+sr_arpcache.c:/* Checks if an IP->MAC mapping is in the cache. IP is in network byte order.
