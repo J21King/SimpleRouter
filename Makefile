@@ -33,6 +33,7 @@ SOCK = -lresolv
 endif
 
 CFLAGS = -g -Wall -ansi -D_DEBUG_ -D_GNU_SOURCE $(ARCH)
+DEBUGFLAGS = -o0 -g3 -gdwarf-2
 
 LIBS= $(SOCK) -lm -lpthread
 PFLAGS= -follow-child-processes=yes -cache-dir=/tmp/${USER} 

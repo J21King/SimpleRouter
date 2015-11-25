@@ -71,11 +71,13 @@ void sr_handlepacket(struct sr_instance* sr,
         unsigned int len,
         char* interface/* lent */)
 {
+  uint8_t buf[len];
   int cksumtemp = 0;
   int cksumcalculated = 0;
   struct sr_arpentry *entry;
   struct sr_arpreq *req;
   struct sr_arpcache *arp_cache = &(sr->cache);
+  struct sr_if *sr_interface;
 
   /* REQUIRES */
   assert(sr);
@@ -87,23 +89,37 @@ void sr_handlepacket(struct sr_instance* sr,
   /* fill in code here */
   sr_ip_hdr_t *iphdr = (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
   sr_arp_hdr_t *arphdr = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
+  
+  sr_ethernet_hdr_t *arpreply_ethhdr = (sr_ethernet_hdr_t *)buf;
+  sr_arp_hdr_t *arpreply_arphdr = (sr_arp_hdr_t *)(buf + sizeof(sr_ethernet_hdr_t));
 
   if (len < sizeof(sr_ethernet_hdr_t)) {
-    fprintf(stderr, "Failed to print ETHERNET header, insufficient length\n");
+    fprintf(stderr, "ETHERNET header is insufficient length\n");
     return;
   }
 
   if(ethertype(packet) == ethertype_arp) { /* ARP */
-    if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t)))
-      fprintf(stderr, "Failed to print ARP header, insufficient length\n");
+    if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t))) /* could call sr_arp_req_not_for_us, maybe later */
+      fprintf(stderr, "ARP header is insufficient length\n");
     else {
       printf("ARP packet\n");
+	/* check if ARP packet is for me */
 	if(ntohs(arphdr->ar_op) == arp_op_request) { /* ARP request */
 	  printf("ARP request\n");
 	  entry = sr_arpcache_lookup(arp_cache,ntohs(arphdr->ar_tip));
+	  sr_interface = sr_get_interface(sr,interface);
+	  memcpy(buf,packet,len);
+	  memset(arpreply_ethhdr->ether_dhost,0xff,6);
+	  memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
+	  arpreply_ethhdr->ether_type = htons(ethertype_arp);
+	  arpreply_arphdr->ar_op = htons(arp_op_reply); 
+	  memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
+	  arpreply_arphdr->ar_sip = arphdr->ar_tip;
+	  memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
+	  arpreply_arphdr->ar_tip = arphdr->ar_sip;
+	  sr_send_packet(sr,buf,len,interface);
 	  if(entry) {
-	    /* sr_send_packet(sr,packettosend,len,interface); forward packet */
-	    /* send arp reply */
+	    /* sr_send_packet(sr,packet,len,interface); forward packet */
 	    free(entry);
 	  }
 	  else {
@@ -119,7 +135,7 @@ void sr_handlepacket(struct sr_instance* sr,
   }
   else if(ethertype(packet) == ethertype_ip) { /* IP */
     if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t))) {
-      fprintf(stderr, "Failed to print IP header, insufficient length\n");
+      fprintf(stderr, "IP header is insufficient length\n");
       return;
     }
     else {

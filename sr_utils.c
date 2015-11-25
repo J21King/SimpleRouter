@@ -124,7 +124,7 @@ void print_hdr_arp(uint8_t *buf) {
   sr_arp_hdr_t *arp_hdr = (sr_arp_hdr_t *)(buf);
   fprintf(stderr, "ARP header\n");
   fprintf(stderr, "\thardware type: %d\n", ntohs(arp_hdr->ar_hrd));
-  fprintf(stderr, "\tprotocol type: %d\n", ntohs(arp_hdr->ar_pro));
+  fprintf(stderr, "\tprotocol type: 0x%x\n", ntohs(arp_hdr->ar_pro));
   fprintf(stderr, "\thardware address length: %d\n", arp_hdr->ar_hln);
   fprintf(stderr, "\tprotocol address length: %d\n", arp_hdr->ar_pln);
   fprintf(stderr, "\topcode: 0x%x\n", ntohs(arp_hdr->ar_op));
