@@ -99,7 +99,7 @@ void print_hdr_ip(uint8_t *buf) {
   fprintf(stderr, "\tprotocol: %d\n", iphdr->ip_p);
 
   /*Keep checksum in NBO*/
-  fprintf(stderr, "\tchecksum: %d\n", iphdr->ip_sum);
+  fprintf(stderr, "\tchecksum: 0x%x\n", iphdr->ip_sum);
 
   fprintf(stderr, "\tsource: ");
   print_addr_ip_int(ntohl(iphdr->ip_src));
@@ -115,7 +115,7 @@ void print_hdr_icmp(uint8_t *buf) {
   fprintf(stderr, "\ttype: %d\n", icmp_hdr->icmp_type);
   fprintf(stderr, "\tcode: %d\n", icmp_hdr->icmp_code);
   /* Keep checksum in NBO */
-  fprintf(stderr, "\tchecksum: %d\n", icmp_hdr->icmp_sum);
+  fprintf(stderr, "\tchecksum: 0x%x\n", icmp_hdr->icmp_sum);
 }
 
 

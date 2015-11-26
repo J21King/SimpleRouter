@@ -87,8 +87,9 @@ void sr_handlepacket(struct sr_instance* sr,
   printf("\n*** -> Received packet of length %d \n",len);
 
   /* fill in code here */
-  sr_ip_hdr_t *iphdr = (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
   sr_arp_hdr_t *arphdr = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
+  sr_ip_hdr_t *iphdr = (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
+  sr_icmp_hdr_t *icmphdr = (sr_icmp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
   
   sr_ethernet_hdr_t *arpreply_ethhdr = (sr_ethernet_hdr_t *)buf;
   sr_arp_hdr_t *arpreply_arphdr = (sr_arp_hdr_t *)(buf + sizeof(sr_ethernet_hdr_t));
@@ -99,40 +100,47 @@ void sr_handlepacket(struct sr_instance* sr,
   }
 
   if(ethertype(packet) == ethertype_arp) { /* ARP */
-    if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t))) /* could call sr_arp_req_not_for_us, maybe later */
+    if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t))) {
+      /* could call sr_arp_req_not_for_us, maybe later */
       fprintf(stderr, "ARP header is insufficient length\n");
+      return;
+    }
     else {
       printf("ARP packet\n");
-	/* check if ARP packet is for me */
-	if(ntohs(arphdr->ar_op) == arp_op_request) { /* ARP request */
-	  printf("ARP request\n");
-	  entry = sr_arpcache_lookup(arp_cache,ntohs(arphdr->ar_tip));
-	  sr_interface = sr_get_interface(sr,interface);
-	  memcpy(buf,packet,len);
-	  memset(arpreply_ethhdr->ether_dhost,0xff,6);
-	  memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
-	  arpreply_ethhdr->ether_type = htons(ethertype_arp);
-	  arpreply_arphdr->ar_op = htons(arp_op_reply); 
-	  memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
-	  arpreply_arphdr->ar_sip = arphdr->ar_tip;
-	  memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
-	  arpreply_arphdr->ar_tip = arphdr->ar_sip;
-	  sr_send_packet(sr,buf,len,interface);
-	  if(entry) {
-	    /* sr_send_packet(sr,packet,len,interface); forward packet */
-	    free(entry);
-	  }
-	  else {
-	    req = sr_arpcache_queuereq(arp_cache,ntohs(arphdr->ar_tip),packet,len,interface);
-	    handle_arpreq(arp_cache,req);
-	  }
+      /* check if ARP packet is for me */
+      if(ntohs(arphdr->ar_op) == arp_op_request) { /* ARP request */
+	printf("ARP request\n");
+	entry = sr_arpcache_lookup(arp_cache,ntohs(arphdr->ar_tip));
+	sr_interface = sr_get_interface(sr,interface);
+	memcpy(buf,packet,len);
+	memset(arpreply_ethhdr->ether_dhost,0xff,6);
+	memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
+	arpreply_ethhdr->ether_type = htons(ethertype_arp);
+	arpreply_arphdr->ar_op = htons(arp_op_reply); 
+	memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
+	arpreply_arphdr->ar_sip = arphdr->ar_tip;
+	memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
+	arpreply_arphdr->ar_tip = arphdr->ar_sip;
+	sr_send_packet(sr,buf,len,interface);
+	if(entry) {
+	  /* check IP->MAC mapping to get correct interface */
+	  /* sr_send_packet(sr,packet,len,interface); forward packet */
+	  free(entry);
 	}
-	else if(ntohs(arphdr->ar_op) == arp_op_reply) /* ARP reply */
-	  printf("ARP reply\n");
-	else
-	  printf("Unknown ARP opcode\n");
+	else {
+	  req = sr_arpcache_queuereq(arp_cache,ntohs(arphdr->ar_tip),packet,len,interface);
+	  handle_arpreq(arp_cache,req);
+	}
+      }
+      else if(ntohs(arphdr->ar_op) == arp_op_reply) { /* ARP reply */
+	/* cache the reply and sent oustanding packets */
+	printf("ARP reply\n");
+      }
+      else /* not ARP request or reply */
+	printf("Unknown ARP opcode\n");
     }
   }
+
   else if(ethertype(packet) == ethertype_ip) { /* IP */
     if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t))) {
       fprintf(stderr, "IP header is insufficient length\n");
@@ -142,24 +150,24 @@ void sr_handlepacket(struct sr_instance* sr,
       printf("IP packet\n");
       cksumtemp = iphdr->ip_sum;
       iphdr->ip_sum = 0;
-      cksumcalculated = cksum((void *)iphdr,iphdr->ip_len);
+      cksumcalculated = cksum((void *)iphdr,4*iphdr->ip_hl);
       if(cksumtemp == cksumcalculated) {
 	printf("Checksum good!");
 	/* send echo reply */
       }
-      else if(cksumtemp != cksumcalculated) {
+      else {
 	printf("Checksum bad!");
 	/* drop packet */
       }
-      else { /* error handling */
-	if(iphdr->ip_ttl <= 1)
-	  printf("ICMP time exceeded"); /* ICMP time exceeded */
-	else
-	  iphdr->ip_ttl -= 1;
-	  /* perform LPM and then forward packet */
-      }
+
+      if(iphdr->ip_ttl <= 1) /* error handling */
+	printf("ICMP time exceeded"); /* ICMP time exceeded */
+      else
+	iphdr->ip_ttl -= 1;
+	/* perform LPM and then forward packet */
     }
   }
+
   else /* not IP or ARP */
     printf("Unrecognized Ethernet Type 0x%X\n",ethertype(packet));
 }
