@@ -78,6 +78,8 @@ void sr_handlepacket(struct sr_instance* sr,
   struct sr_arpreq *req;
   struct sr_arpcache *arp_cache = &(sr->cache);
   struct sr_if *sr_interface;
+  struct sr_rt *rt_walker = 0;
+  char *temp_if;
 
   /* REQUIRES */
   assert(sr);
@@ -111,17 +113,21 @@ void sr_handlepacket(struct sr_instance* sr,
       if(ntohs(arphdr->ar_op) == arp_op_request) { /* ARP request */
 	printf("ARP request\n");
 	entry = sr_arpcache_lookup(arp_cache,ntohs(arphdr->ar_tip));
+
 	sr_interface = sr_get_interface(sr,interface);
 	memcpy(buf,packet,len);
+
 	memset(arpreply_ethhdr->ether_dhost,0xff,6);
 	memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
 	arpreply_ethhdr->ether_type = htons(ethertype_arp);
+
 	arpreply_arphdr->ar_op = htons(arp_op_reply); 
 	memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
 	arpreply_arphdr->ar_sip = arphdr->ar_tip;
 	memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
 	arpreply_arphdr->ar_tip = arphdr->ar_sip;
 	sr_send_packet(sr,buf,len,interface);
+
 	if(entry) {
 	  /* check IP->MAC mapping to get correct interface */
 	  /* sr_send_packet(sr,packet,len,interface); forward packet */
@@ -129,12 +135,12 @@ void sr_handlepacket(struct sr_instance* sr,
 	}
 	else {
 	  req = sr_arpcache_queuereq(arp_cache,ntohs(arphdr->ar_tip),packet,len,interface);
-	  handle_arpreq(arp_cache,req);
+	  handle_arpreq(arp_cache,req); /* send ARP req and wait for reply */
 	}
       }
       else if(ntohs(arphdr->ar_op) == arp_op_reply) { /* ARP reply */
-	/* cache the reply and sent oustanding packets */
 	printf("ARP reply\n");
+	/* cache the reply and sent oustanding packets */
       }
       else /* not ARP request or reply */
 	printf("Unknown ARP opcode\n");
@@ -152,16 +158,40 @@ void sr_handlepacket(struct sr_instance* sr,
       iphdr->ip_sum = 0;
       cksumcalculated = cksum((void *)iphdr,4*iphdr->ip_hl);
       if(cksumtemp == cksumcalculated) {
-	printf("Checksum good!");
-	/* send echo reply */
+	printf("Checksum good!\n");
+	/* check routing table, LPM */
+	rt_walker = sr->routing_table;
+	while(rt_walker != NULL) { 
+	  if(iphdr->ip_dst == (uint32_t)rt_walker->dest.s_addr) { /* checks for IP addr */
+	    temp_if = rt_walker->interface;
+	  }
+	  rt_walker = rt_walker->next;
+	}
+	/* construct arp req with new if */	
+	sr_interface = sr_get_interface(sr,temp_if);
+
+	memset(arpreply_ethhdr->ether_dhost,0xff,6);
+	memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
+	arpreply_ethhdr->ether_type = htons(ethertype_arp);
+
+	arpreply_arphdr->ar_hrd = htons(arp_hrd_ethernet);
+	arpreply_arphdr->ar_pro = htons(ethertype_ip);
+	arpreply_arphdr->ar_hln = 0x6;
+	arpreply_arphdr->ar_pln = 0x4;
+	arpreply_arphdr->ar_op = htons(arp_op_request); 
+	memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
+	arpreply_arphdr->ar_sip = sr_interface->ip;
+	memset(arpreply_arphdr->ar_tha,0x00,6);
+	arpreply_arphdr->ar_tip = iphdr->ip_dst;
+	sr_send_packet(sr,buf,42,temp_if);
       }
       else {
-	printf("Checksum bad!");
+	printf("Checksum bad!\n");
 	/* drop packet */
       }
 
       if(iphdr->ip_ttl <= 1) /* error handling */
-	printf("ICMP time exceeded"); /* ICMP time exceeded */
+	printf("ICMP time exceeded\n"); /* ICMP time exceeded */
       else
 	iphdr->ip_ttl -= 1;
 	/* perform LPM and then forward packet */
