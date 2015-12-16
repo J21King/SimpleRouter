@@ -129,8 +129,16 @@ void sr_handlepacket(struct sr_instance* sr,
       }
       else if(ntohs(arphdr->ar_op) == arp_op_reply) { /* ARP reply */
 	printf("ARP reply\n");
-	/* this should come from dest */
 	/* cache the reply and sent oustanding packets */
+	req = sr_arpcache_insert(arp_cache,arphdr->ar_sha,arphdr->ar_sip);
+	if(req != NULL) {
+	  /* yolo */
+	  printf("ARP req in cache\n");
+	  /* sr_send_packet(sr,req->packets->buf,req->packets->len,req->packets->iface); */
+	  /* sr_arpreq_destroy(arp_cache,req); */
+	}
+	else
+	  printf("ARP req not in cache\n");
       }
       else /* not ARP request or reply */
 	fprintf(stderr, "Unknown ARP opcode\n");
@@ -158,30 +166,32 @@ void sr_handlepacket(struct sr_instance* sr,
 	  return;
 	}
 	else
-	  iphdr->ip_ttl -= 1; /* perform LPM and then forward packet */
+	  iphdr->ip_ttl -= 1;
 
-	/* check cache first to avoid unnecessary arp req*/
-	entry = sr_arpcache_lookup(arp_cache,ntohs(arphdr->ar_tip));
+	/* todo: LPM and find next hop ip, if no match ICMP net unreachable  */
+	  
+	/* check routing table, save interface */
+	rt_walker = sr->routing_table;
+	while(rt_walker != NULL) { 
+	  if(iphdr->ip_dst == (uint32_t)rt_walker->dest.s_addr) { /* checks for dest IP addr, should be LPM ip not ip_dst */
+	    temp_if = rt_walker->interface;
+	  }
+	  rt_walker = rt_walker->next;
+	}
+	sr_interface = sr_get_interface(sr,temp_if);
 
-	if(entry) {
+	/* check cache to avoid unnecessary arp req */
+	entry = sr_arpcache_lookup(arp_cache,ntohs(iphdr->ip_dst)); /* should be LPM ip not ip_dst, but since next hop is destination... */
+
+	if(entry != NULL) { /* cache hit, just send ip packet to next hop*/
 	  /* check IP->MAC mapping to get correct interface */
-	  sr_send_packet(sr,packet,len,sr_interface); /* no arp, forward packet */
+	  sr_send_packet(sr,packet,len,sr_interface);
 	  free(entry);
 	}
 	else {
-	  /* check routing table, LPM, save interface */
-	  rt_walker = sr->routing_table;
-	  while(rt_walker != NULL) { 
-	    if(iphdr->ip_dst == (uint32_t)rt_walker->dest.s_addr) { /* checks for IP addr */
-	      temp_if = rt_walker->interface;
-	    }
-	    rt_walker = rt_walker->next;
-	  }
-	  sr_interface = sr_get_interface(sr,temp_if);
-
-	  /* cache req and packet 
-	  req = sr_arpcache_queuereq(arp_cache,ntohs(arphdr->ar_tip),packet,len,interface);
-	  handle_arpreq(arp_cache,req); */ 
+	  /* cache req */ 
+	  req = sr_arpcache_queuereq(arp_cache,ntohs(iphdr->ip_dst),packet,len,sr_interface);
+	  /* handle_arpreq(arp_cache,req); */ 
 
 	  /* send ARP req and wait for reply */
 	  if(sr_interface == 0) { /* no match in routing table */
@@ -203,7 +213,10 @@ void sr_handlepacket(struct sr_instance* sr,
 	    arpreply_arphdr->ar_sip = sr_interface->ip;
 	    memset(arpreply_arphdr->ar_tha,0x00,6);
 	    arpreply_arphdr->ar_tip = iphdr->ip_dst;
-	    sr_send_packet(sr,buf,42,temp_if);
+
+	    /* cache the packet */
+	    req = sr_arpcache_queuereq(arp_cache,ntohs(iphdr->ip_dst),packet,len,sr_interface);
+	    handle_arpreq(arp_cache,sr,req,buf,temp_if);
 	  }
 	}
       }

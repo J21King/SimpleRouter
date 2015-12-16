@@ -26,7 +26,10 @@ void sr_arpcache_sweepreqs(struct sr_instance *sr) {
 }
 
 void handle_arpreq(struct sr_arpcache *cache,
-		   struct sr_arpreq *req)
+		   struct sr_instance *sr,
+		   struct sr_arpreq *req,
+		   uint8_t buf[],
+		   char *temp_if)
 {
   time_t now = time(0);
 
@@ -37,6 +40,8 @@ void handle_arpreq(struct sr_arpcache *cache,
 	}
 	else {
 	  /* send arp request */
+	  sr_send_packet(sr,buf,42,temp_if);
+
 	  req->sent = now;
 	  req->times_sent++;
 	}
