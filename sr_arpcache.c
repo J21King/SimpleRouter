@@ -29,7 +29,7 @@ void handle_arpreq(struct sr_arpcache *cache,
 		   struct sr_instance *sr,
 		   struct sr_arpreq *req,
 		   uint8_t buf[],
-		   char *temp_if)
+		   char *interface)
 {
   time_t now = time(0);
 
@@ -40,7 +40,7 @@ void handle_arpreq(struct sr_arpcache *cache,
 	}
 	else {
 	  /* send arp request */
-	  sr_send_packet(sr,buf,42,temp_if);
+	  sr_send_packet(sr,buf,42,interface);
 
 	  req->sent = now;
 	  req->times_sent++;

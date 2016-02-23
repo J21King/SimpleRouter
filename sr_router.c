@@ -89,12 +89,15 @@ void sr_handlepacket(struct sr_instance* sr,
   printf("\n*** -> Received packet of length %d \n",len);
 
   /* fill in code here */
+  sr_ethernet_hdr_t *ethhdr = (sr_ethernet_hdr_t *)packet;
   sr_arp_hdr_t *arphdr = (sr_arp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
   sr_ip_hdr_t *iphdr = (sr_ip_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t));
   sr_icmp_hdr_t *icmphdr = (sr_icmp_hdr_t *)(packet + sizeof(sr_ethernet_hdr_t) + sizeof(sr_ip_hdr_t));
-  
+
   sr_ethernet_hdr_t *arpreply_ethhdr = (sr_ethernet_hdr_t *)buf;
   sr_arp_hdr_t *arpreply_arphdr = (sr_arp_hdr_t *)(buf + sizeof(sr_ethernet_hdr_t));
+
+  sr_ethernet_hdr_t *temp;
 
   if (len < sizeof(sr_ethernet_hdr_t)) {
     fprintf(stderr, "ETHERNET header is insufficient length\n");
@@ -120,7 +123,7 @@ void sr_handlepacket(struct sr_instance* sr,
 	memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
 	arpreply_ethhdr->ether_type = htons(ethertype_arp);
 
-	arpreply_arphdr->ar_op = htons(arp_op_reply); 
+	arpreply_arphdr->ar_op = htons(arp_op_reply);
 	memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
 	arpreply_arphdr->ar_sip = arphdr->ar_tip;
 	memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
@@ -129,16 +132,19 @@ void sr_handlepacket(struct sr_instance* sr,
       }
       else if(ntohs(arphdr->ar_op) == arp_op_reply) { /* ARP reply */
 	printf("ARP reply\n");
-	/* cache the reply and sent oustanding packets */
-	req = sr_arpcache_insert(arp_cache,arphdr->ar_sha,arphdr->ar_sip);
+	/* cache IP->MAC mapping and check if arp req in queue */
+	req = sr_arpcache_insert(arp_cache,arphdr->ar_tha,ntohs(arphdr->ar_tip));
+	temp = (sr_ethernet_hdr_t *)req->packets->buf;
+	memcpy(temp->ether_dhost,ethhdr->ether_shost,6);
+	print_hdrs(req->packets->buf,req->packets->len);
 	if(req != NULL) {
-	  /* yolo */
-	  printf("ARP req in cache\n");
-	  /* sr_send_packet(sr,req->packets->buf,req->packets->len,req->packets->iface); */
+	  /* send outstanding packets */
+	  printf("ARP req in queue\n");
+	  sr_send_packet(sr,req->packets->buf,req->packets->len,interface);
 	  /* sr_arpreq_destroy(arp_cache,req); */
 	}
 	else
-	  printf("ARP req not in cache\n");
+	  printf("ARP req not in queue\n");
       }
       else /* not ARP request or reply */
 	fprintf(stderr, "Unknown ARP opcode\n");
@@ -166,13 +172,16 @@ void sr_handlepacket(struct sr_instance* sr,
 	  return;
 	}
 	else
-	  iphdr->ip_ttl -= 1;
+	  iphdr->ip_ttl -= 1; 
+	
+	/* update checksum */
+	iphdr->ip_sum = cksum((void *)iphdr,4*iphdr->ip_hl);
 
 	/* todo: LPM and find next hop ip, if no match ICMP net unreachable  */
-	  
+
 	/* check routing table, save interface */
 	rt_walker = sr->routing_table;
-	while(rt_walker != NULL) { 
+	while(rt_walker != NULL) {
 	  if(iphdr->ip_dst == (uint32_t)rt_walker->dest.s_addr) { /* checks for dest IP addr, should be LPM ip not ip_dst */
 	    temp_if = rt_walker->interface;
 	  }
@@ -184,22 +193,17 @@ void sr_handlepacket(struct sr_instance* sr,
 	entry = sr_arpcache_lookup(arp_cache,ntohs(iphdr->ip_dst)); /* should be LPM ip not ip_dst, but since next hop is destination... */
 
 	if(entry != NULL) { /* cache hit, just send ip packet to next hop*/
-	  /* check IP->MAC mapping to get correct interface */
 	  sr_send_packet(sr,packet,len,sr_interface);
 	  free(entry);
 	}
 	else {
-	  /* cache req */ 
-	  req = sr_arpcache_queuereq(arp_cache,ntohs(iphdr->ip_dst),packet,len,sr_interface);
-	  /* handle_arpreq(arp_cache,req); */ 
-
 	  /* send ARP req and wait for reply */
 	  if(sr_interface == 0) { /* no match in routing table */
 	    fprintf(stderr, "ICMP host unreachable\n");
 	    return;
 	  }
 	  else { /* match in routing table */
-	    /* construct arp req with new interface */	
+	    /* construct arp req with new interface */
 	    memset(arpreply_ethhdr->ether_dhost,0xff,6);
 	    memcpy(arpreply_ethhdr->ether_shost,sr_interface->addr,6);
 	    arpreply_ethhdr->ether_type = htons(ethertype_arp);
@@ -208,15 +212,16 @@ void sr_handlepacket(struct sr_instance* sr,
 	    arpreply_arphdr->ar_pro = htons(ethertype_ip);
 	    arpreply_arphdr->ar_hln = 0x6;
 	    arpreply_arphdr->ar_pln = 0x4;
-	    arpreply_arphdr->ar_op = htons(arp_op_request); 
+	    arpreply_arphdr->ar_op = htons(arp_op_request);
 	    memcpy(arpreply_arphdr->ar_sha,sr_interface->addr,6);
 	    arpreply_arphdr->ar_sip = sr_interface->ip;
 	    memset(arpreply_arphdr->ar_tha,0x00,6);
 	    arpreply_arphdr->ar_tip = iphdr->ip_dst;
 
-	    /* cache the packet */
+	    memcpy(ethhdr->ether_shost,sr_interface->addr,6);
+	    /* add packet to queue list */
 	    req = sr_arpcache_queuereq(arp_cache,ntohs(iphdr->ip_dst),packet,len,sr_interface);
-	    handle_arpreq(arp_cache,sr,req,buf,temp_if);
+	    handle_arpreq(arp_cache,sr,req,buf,sr_interface);
 	  }
 	}
       }
@@ -232,4 +237,3 @@ void sr_handlepacket(struct sr_instance* sr,
     printf("Unrecognized Ethernet Type 0x%X\n",ethertype(packet));
 }
 /* end sr_ForwardPacket */
-
