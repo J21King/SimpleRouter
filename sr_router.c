@@ -97,7 +97,7 @@ void sr_handlepacket(struct sr_instance* sr,
   sr_ethernet_hdr_t *arpreply_ethhdr = (sr_ethernet_hdr_t *)buf;
   sr_arp_hdr_t *arpreply_arphdr = (sr_arp_hdr_t *)(buf + sizeof(sr_ethernet_hdr_t));
 
-  sr_ethernet_hdr_t *temp;
+  sr_ethernet_hdr_t *tempreq;
 
   if (len < sizeof(sr_ethernet_hdr_t)) {
     fprintf(stderr, "ETHERNET header is insufficient length\n");
@@ -106,15 +106,14 @@ void sr_handlepacket(struct sr_instance* sr,
 
   if(ethertype(packet) == ethertype_arp) { /* ARP */
     if (len < (sizeof(sr_ethernet_hdr_t) + sizeof(sr_arp_hdr_t))) {
-      /* could call sr_arp_req_not_for_us, maybe later */
+      /* todo: call sr_arp_req_not_for_us, maybe later */
       fprintf(stderr, "ARP header is insufficient length\n");
       return;
     }
     else {
-      printf("ARP packet\n");
-      /* todo: check if ARP packet is for me */
+      printf("ARP packet received\n");
       if(ntohs(arphdr->ar_op) == arp_op_request) { /* ARP request */
-	printf("ARP request\n");
+	printf("\tARP request\n");
 	/* send ARP reply */
 	sr_interface = sr_get_interface(sr,interface);
 	memcpy(buf,packet,len);
@@ -129,22 +128,24 @@ void sr_handlepacket(struct sr_instance* sr,
 	memcpy(arpreply_arphdr->ar_tha,arphdr->ar_sha,6);
 	arpreply_arphdr->ar_tip = arphdr->ar_sip;
 	sr_send_packet(sr,buf,len,interface);
+
+	printf("\tARP reply sent\n");
+		/* sr_arpcache_dump(arp_cache); */
       }
       else if(ntohs(arphdr->ar_op) == arp_op_reply) { /* ARP reply */
-	printf("ARP reply\n");
+	printf("\tARP reply\n");
 	/* cache IP->MAC mapping and check if arp req in queue */
-	req = sr_arpcache_insert(arp_cache,arphdr->ar_tha,ntohs(arphdr->ar_tip));
-	temp = (sr_ethernet_hdr_t *)req->packets->buf;
-	memcpy(temp->ether_dhost,ethhdr->ether_shost,6);
-	print_hdrs(req->packets->buf,req->packets->len);
+	req = sr_arpcache_insert(arp_cache,arphdr->ar_sha,ntohs(arphdr->ar_sip));
+	tempreq = (sr_ethernet_hdr_t *)req->packets->buf;
+	memcpy(tempreq->ether_dhost,ethhdr->ether_shost,6);
 	if(req != NULL) {
-	  /* send outstanding packets */
-	  printf("ARP req in queue\n");
+	  /* send outstanding packets by call */
+	  printf("\tARP req in queue\n");
 	  sr_send_packet(sr,req->packets->buf,req->packets->len,interface);
-	  /* sr_arpreq_destroy(arp_cache,req); */
+	  sr_arpreq_destroy(arp_cache,req);
 	}
 	else
-	  printf("ARP req not in queue\n");
+	  printf("\tARP req not in queue\n");
       }
       else /* not ARP request or reply */
 	fprintf(stderr, "Unknown ARP opcode\n");
@@ -157,14 +158,14 @@ void sr_handlepacket(struct sr_instance* sr,
       return;
     }
     else {
-      printf("IP packet\n");
+      printf("IP packet received\n");
       /* check checksum */
       cksumtemp = iphdr->ip_sum;
       iphdr->ip_sum = 0;
       cksumcalculated = cksum((void *)iphdr,4*iphdr->ip_hl);
 
       if(cksumtemp == cksumcalculated) {
-	printf("Checksum good!\n");
+	printf("\tChecksum good!\n");
 
 	/* this part should not be here, it should be called though */
 	if(iphdr->ip_ttl <= 1) {
@@ -193,11 +194,12 @@ void sr_handlepacket(struct sr_instance* sr,
 	entry = sr_arpcache_lookup(arp_cache,ntohs(iphdr->ip_dst)); /* should be LPM ip not ip_dst, but since next hop is destination... */
 
 	if(entry != NULL) { /* cache hit, just send ip packet to next hop*/
+	  printf("\tIP->MAC hit\n");
 	  sr_send_packet(sr,packet,len,sr_interface);
 	  free(entry);
 	}
-	else {
-	  /* send ARP req and wait for reply */
+	else { /* cache miss, send ARP req and wait for reply */
+	  printf("\tIP->MAC miss\n");
 	  if(sr_interface == 0) { /* no match in routing table */
 	    fprintf(stderr, "ICMP host unreachable\n");
 	    return;
@@ -219,6 +221,8 @@ void sr_handlepacket(struct sr_instance* sr,
 	    arpreply_arphdr->ar_tip = iphdr->ip_dst;
 
 	    memcpy(ethhdr->ether_shost,sr_interface->addr,6);
+
+	    printf("\tARP request sent\n");
 	    /* add packet to queue list */
 	    req = sr_arpcache_queuereq(arp_cache,ntohs(iphdr->ip_dst),packet,len,sr_interface);
 	    handle_arpreq(arp_cache,sr,req,buf,sr_interface);
@@ -227,7 +231,7 @@ void sr_handlepacket(struct sr_instance* sr,
       }
       else {
 	/* drop packet */
-	fprintf(stderr, "Checksum bad!\n");
+	fprintf(stderr, "\tChecksum bad!\n");
 	return;
       }
     }
